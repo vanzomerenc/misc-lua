@@ -1,10 +1,6 @@
----
--- (c) Christopher VanZomeren
--- See license included with this program
---
--- readonly.lua
---
--- used to provide a readonly interface of a table
+---@module readonly
+-- @author Christopher VanZomeren
+-- @copyright (c) 2014 Christopher VanZomeren
 
 assert(..., 'Do not use as main file; use require from different file')
 local _pkg = (...):match("(.-)[^%.]+$")

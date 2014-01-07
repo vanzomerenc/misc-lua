@@ -1,8 +1,19 @@
----
--- (c) 2014 Christopher VanZomeren
--- See LICENSE
+---@module memoize
+-- @author Christopher VanZomeren
+-- @copyright (c) 2014 Christopher VanZomeren
 --
--- memoize.lua
+-- Used to memoize arbitrary functions with single return values.
+-- 'Memoized' functions behave similarly to their unmemoized counterparts,
+-- but automatically cache results based on either arguments or a supplied
+-- hash function.
+--
+-- @usage
+-- local memoize = require 'memoize'
+-- local function foo(...) return something end	--an arbitrary function
+-- foo = memoize(foo)	--foo is now memoized
+
+-- LDoc does not like some of the things that happen in this file. Be very careful when adding doc
+-- comments, or it will probably crash, and almost certainly not output what was intended.
 
 assert(..., 'Do not use as main file; use require from different file')
 local _pkg = (...):match('(.-)[^%.]+$')
@@ -11,7 +22,7 @@ local _id = select(2,...) or ...
 
 local debug_getinfo = debug and debug.getinfo
 
-local assert = assert
+local error = error
 local pairs = pairs
 local select = select
 local setmetatable = setmetatable
@@ -35,7 +46,7 @@ local is_value_type = {boolean = true, string = true, number = true, ['nil'] = t
 
 
 
--- Used to store nil as a hash or result
+---@local Used to store nil as a hash or result
 
 local de_nil, re_nil
 do
@@ -46,49 +57,76 @@ end
 
 
 
--- Used to provide the number of parameters of a function to the default hash function
+---Used to provide the number of parameters of a function to the default hash function
 
-local function get_nparams() return end
+local function get_nparams(a_function) return end
 
-local warn_debug_getinfo_fail = 'unused arguments to memoized functions will still be used for caching if no hash function is supplied'
+do
+	local warn_debug_getinfo_fail =
+'unused arguments to memoized functions will still be used for caching if no hash function is supplied'
 
-if debug_getinfo then
-	if debug_getinfo(function()end, 'u').nparams then
-		function get_nparams(a_function)
-			local info = debug_getinfo(a_function, 'u')
-			if not info.isvararg then return info.nparams end
+	if debug_getinfo then
+	
+		if debug_getinfo(function()end, 'u').nparams then
+		
+			function get_nparams(a_function)
+			
+				local info = debug_getinfo(a_function, 'u')
+				if not info.isvararg then return info.nparams end
+			end
+			
+		else
+		
+			warn 'debug.getinfo does not include nparams'; warn(warn_debug_getinfo_fail)
 		end
-	else warn 'debug.getinfo does not include nparams'; warn(warn_debug_getinfo_fail)
+		
+	else
+	
+		warn 'debug.getinfo does not exist'; warn(warn_debug_getinfo_fail)
 	end
-else warn 'debug.getinfo does not exist'; warn(warn_debug_getinfo_fail)
 end
 
 
 
--- This is our memoization function.
+local -- Placed before comment so LDoc doesn't see it.
 
-local function memoize(a_function, a_hash_function)
-		
-	-- The default hash function uses the arguments of the function as the hash.
-	-- The list of these arguments is automatically truncated/expanded if debug.getinfo exists
-	-- and a_function does not use varargs.
+---The function returned by `require 'memoize'`
+--
+-- @param a_function A function or other callable object to memoize
+-- @param[opt] a_hash_function An optional function used to transform the arguments to
+-- `a_function` when caching. May return one or more values. If not specified, the
+-- default for this parameter is a function equivalent to
+--
+-- `unpack({...}, 1, nparams)`
+--
+-- where `nparams` is the number of parameters to `a_function`, or `nil` if `a_function` uses
+-- varargs (`...`) or if `debug.getinfo` does not exist or does not return parameter information;
+--
+-- @return `a_memoized_function` (an object representing the memoized function)
+
+function memoize(a_function, a_hash_function)
+
+	if type(a_function) ~= 'function' then
+		error('Argument 1 (a_function): expected function; got '..type(a_function))
+	end
 	
-	if not a_hash_function then
+	if a_hash_function == nil then
 		local num_args = get_nparams(a_function)
 		function a_hash_function(...) return unpack({...}, 1, num_args) end
 	end
+	if type(a_hash_function) ~= 'function' then
+		error('Argument 2 (a_hash_function): expected function; got '..type(a_function))
+	end
 
-	local cache
-	local parent_nodes_of
-	
+	local cache = weak 'kv'
+	local parent_nodes_of = weak 'k'
 	local result_of
-	local explicit_result_of
 	
 	local make_result_table
 	
 	
 	
-	-- Adds a node to the set of parents of another node or of a result
+	---Adds a node to the set of parents of another node or of a result
 	
 	local function add_parent_node(x, node)
 	
@@ -104,13 +142,11 @@ local function memoize(a_function, a_hash_function)
 	
 	
 	
-	-- Gets the result of a cache node or, if there is none, caches and returns the result of the function call.
+	---Gets the result of a cache node or, if there is none, caches and returns the result of the function call.
 	
 	local function get_or_save_result(node, ...)
 	
-		local result = explicit_result_of[node]
-	
-		if result == nil then result = result_of[node] end
+		local result = result_of[node]
 		
 		if result == nil then
 		
@@ -130,7 +166,7 @@ local function memoize(a_function, a_hash_function)
 	
 	
 	
-	-- Recursively finds the node for each argument in ...
+	---Recursively finds the node for each argument in (next_arg, ...)
 	
 	local function find_node_in(this_node, next_arg, ...)
 
@@ -155,17 +191,40 @@ local function memoize(a_function, a_hash_function)
 	
 	
 	
+
 	local a_memoized_function_mt = {__metatable = 'memoized function'}
+	
+	--I still do not quite understand LDoc.
+	
+	---Memoized function methods:
+	--
+	-- @section a_memoized_function
+	
+	---Behaves like the function used to create it, but returns only a single result
+	-- which is cached for future calls.
+	--
+	-- @name a_memoized_function
+	-- @param ... The parameters to the memoized function
+	-- @return the first return value of the memoized function
+
 	local a_memoized_function = setmetatable({}, a_memoized_function_mt)
 	
 	
 	
-	-- Replaces the result table with one that allows collection of unused results,
-	-- copying all key-value pairs to the new table
+	local function assert_self(self)
+		if self ~= a_memoized_function then
+			error('First parameter is not self. Check usage of \'.\' and \':\'', 2)
+		end
+	end
+	
+	
+	
+	---Allows garbage collection of unused cached results.
+	-- @return `self`
 	
 	function a_memoized_function:allowgc()
 	
-		assert(self == a_memoized_function)
+		assert_self(self)
 		make_result_table = function() return weak 'kv' end
 		
 		local new_results = make_result_table()
@@ -178,12 +237,12 @@ local function memoize(a_function, a_hash_function)
 	
 	
 	
-	-- Replaces the result table with one that does not allow collection of unused results,
-	-- copying all existing key-value pairs to the new table
+	---Prevents garbage collection of unused cached results. This is the default behavior.
+	-- @return `self`
 	
 	function a_memoized_function:preventgc()
 	
-		assert(self == a_memoized_function)
+		assert_self(self)
 		make_result_table = function() return {} end
 		
 		local new_results = make_result_table()
@@ -196,79 +255,41 @@ local function memoize(a_function, a_hash_function)
 	
 	
 	
-	-- Sets the result for a series of arguments
-	
-	function a_memoized_function:remember(...)
-	
-		assert(self == a_memoized_function)
-	
-		local args = {...}
-	
-		return function(result)
-		
-			explicit_result_of[find_node_in(cache, a_hash_function(unpack(args)))] = result
-			return self
-		end
-	end
-	
-	
-	
-	-- Removes result for a series of arguments
+	---Removes result for a series of arguments
+	--
+	-- @param ... The series of arguments to forget the result of
+	-- @return `self`
 	
 	function a_memoized_function:forget(...)
 	
-		assert(self == a_memoized_function)
+		assert_self(self)
 	
 		local node = find_node_in(cache, a_hash_function(...))
 		
-		explicit_result_of[node] = nil
-		
 		local result_of_node = result_of[node]
 		
-		if result_of_node ~= nil then
-			parent_nodes_of[result_of_node] = nil
-			result_of[node] = nil
+		if not is_value_type[type(result_of_node)] then
+		
+			parent_nodes_of[result_of_node][node] = nil
 		end
 		
-		return self
-	end
-	
-	
-	
-	-- Clears cached results
-	
-	function a_memoized_function:forgetCached()
-	
-		assert(self == a_memoized_function)
-		
-		result_of = make_result_table()
+		result_of[node] = nil
 		
 		return self
 	end
 	
 	
 	
-	-- Clears results that have been set explicitly
-	
-	function a_memoized_function:forgetExplicit()
-	
-		assert(self == a_memoized_function)
-		
-		explicit_result_of = {}
-		
-		return self
-	end
-	
-	
-	-- Clears all results
+	---Clears all results
+	-- @return `self`
 	
 	function a_memoized_function:forgetAll()
 	
-		assert(self == a_memoized_function)
+		assert_self(self)
 		
-		self:forgetCached()
-		self:forgetExplicit()
-		cache, parent_nodes_of = weak 'kv', weak 'k'
+		cache = weak 'kv'
+		parent_nodes_of = weak 'k'
+		result_of = make_result_table()
 		
 		return self
 	end
@@ -279,15 +300,13 @@ local function memoize(a_function, a_hash_function)
 	
 	function a_memoized_function_mt:__call(...)
 	
-		assert(self == a_memoized_function)
+		assert_self(self)
 		return get_or_save_result(find_node_in(cache, a_hash_function(...)), ...)
 	end
 	
+	-- return the memoized function
 	
-	
-	--
-	
-	return a_memoized_function:preventgc():forgetAll()
+	return a_memoized_function:preventgc()
 end
 
 

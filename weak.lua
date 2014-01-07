@@ -1,10 +1,21 @@
----
--- (c) Christopher VanZomeren
--- See LICENSE
---
--- weak.lua
+---@module weak
+-- @author Christopher VanZomeren
+-- @copyright (c) 2014 Christopher VanZomeren
 --
 -- Used to provide tables that do not prevent GC under certain conditions.
+--
+-- Returns a function with one parameter, `mode`, whose valid values are
+-- 
+-- `'k'`, `'key'`, `'ephemeron'` for weak keys;  
+-- `'v'`, `'value'` for weak values; or  
+-- `'kv'`, `'vk'` for weak keys and values
+--
+-- and which returns an empty table with its metatable set to have the corresponding
+-- `__mode`.
+--
+-- @usage
+-- local weak = require 'weak'
+-- local foo = weak 'k'	-- declares foo as a table with weak keys
 
 local assert = assert
 local setmetatable = setmetatable
