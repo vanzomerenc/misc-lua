@@ -14,7 +14,7 @@
 -- `__mode`.
 --
 -- @usage
--- local weak = require 'weak'
+-- local weak = require(pkgname..'weak')
 -- local foo = weak 'k'	-- declares foo as a table with weak keys
 
 local assert = assert

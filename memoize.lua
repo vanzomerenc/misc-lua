@@ -8,7 +8,7 @@
 -- hash function.
 --
 -- @usage
--- local memoize = require 'memoize'
+-- local memoize = require(pkgname..'memoize')
 -- local function foo(...) return something end	--an arbitrary function
 -- foo = memoize(foo)	--foo is now memoized
 
@@ -28,7 +28,7 @@ local select = select
 local setmetatable = setmetatable
 local stderr = io.stderr
 local type = type
-local unpack = unpack or table.unpack
+local unpack = table.unpack or unpack
 
 local weak = require(_pkg..'weak')
 
@@ -48,11 +48,23 @@ local is_value_type = {boolean = true, string = true, number = true, ['nil'] = t
 
 ---@local Used to store nil as a hash or result
 
-local de_nil, re_nil
+local box, unbox
 do
-	local null = {}
-	function de_nil(x) if x == nil then return null else return x end end
-	function re_nil(x) if x == null then return nil else return x end end
+	local null, nan = {}, {}
+	
+	function box(x)
+	
+		if x == nil then return null
+		elseif x ~= x then return nan
+		else return x end
+	end
+	
+	function unbox(x)
+	
+		if x == null then return nil
+		elseif x == nan then return 0/0
+		else return x end
+	end
 end
 
 
@@ -60,7 +72,6 @@ end
 ---Used to provide the number of parameters of a function to the default hash function
 
 local function get_nparams(a_function) return end
-
 do
 	local warn_debug_getinfo_fail =
 'unused arguments to memoized functions will still be used for caching if no hash function is supplied'
@@ -151,7 +162,7 @@ function memoize(a_function, a_hash_function)
 		if result == nil then
 		
 			result = a_function(...)
-			result_of[node] = de_nil(result)
+			result_of[node] = box(result)
 			
 			-- We want one, and only one, unique result usable as a key for each series of hashes.
 			-- This means we cannot let the garbage collector eat a chain of cache nodes if the result
@@ -161,7 +172,7 @@ function memoize(a_function, a_hash_function)
 			if not is_value_type[type(result)] then add_parent_node(result, node) end
 		end
 		
-		return re_nil(result)
+		return unbox(result)
 	end
 	
 	
@@ -174,7 +185,7 @@ function memoize(a_function, a_hash_function)
 	
 		else
 		
-			next_arg = de_nil(next_arg)
+			next_arg = box(next_arg)
 
 			local next_node = this_node[next_arg]
 			
