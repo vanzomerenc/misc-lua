@@ -30,19 +30,17 @@ local stderr = io.stderr
 local type = type
 local unpack = table.unpack or unpack
 
+local opt_args = require(_pkg..'opt_args')
 local weak = require(_pkg..'weak')
 
 
 local _ENV = {}
+local operation = _ENV
 if setfenv then setfenv(1, _ENV) end
 
 
 
 local function warn(msg) stderr:write(_id, ': WARNING: ', msg, '\n') end
-
-
-
-local is_value_type = {boolean = true, string = true, number = true, ['nil'] = true}
 
 
 
@@ -99,225 +97,220 @@ end
 
 
 
-local -- Placed before comment so LDoc doesn't see it.
+---Adds a node to the set of parents of another node or of a result
+
+local function add_parent_node(parent_nodes_of, x, node)
+
+	local parents_of_x = parent_nodes_of[x]
+
+	if not parents_of_x then
+		parents_of_x = {}
+		parent_nodes_of[x] = parents_of_x
+	end
+
+	parents_of_x[node] = true
+end
+
+
+
+---Recursively finds the node for each argument in (next_arg, ...)
+
+local function find_or_create_node_in(this_node, parent_nodes_of, next_arg, ...)
+
+	if  next_arg == nil and select('#', ...) == 0 then return this_node
+
+	else
+
+		next_arg = box(next_arg)
+		local next_node = this_node[next_arg]
+	
+		if not next_node then
+	
+			next_node = weak 'kv'
+			this_node[next_arg] = next_node
+			add_parent_node(parent_nodes_of, next_node, this_node)
+		end
+
+		return find_or_create_node_in(next_node, parent_nodes_of, ...)
+	end
+end
+
+
+
+local is_value_type = {boolean = true, string = true, number = true, ['nil'] = true}
+
+---Gets the result of a cache node or, if there is none, caches and returns the result of the function call.
+
+local function get_or_save_result(parent_nodes_of, result_of, node, a_function, ...)
+
+	local result = result_of[node]
+
+	if result == nil then
+
+		result = a_function(...)
+		result_of[node] = box(result)
+	
+		-- We want one, and only one, unique result usable as a key for each series of hashes.
+		-- This means we cannot let the garbage collector eat a chain of cache nodes if the result
+		-- at the end of the chain is an uncollectable table, function, userdata, et c. However, the same does not
+		-- apply to value-type data as it is already unique, usable as a key, and never collectable.
+	
+		if not is_value_type[type(result)] then add_parent_node(parent_nodes_of, result, node) end
+	end
+
+	return unbox(result)
+end
+
+
+
+local cache_of = weak 'k'
+
+
+
+local function make_weak_table() return weak 'kv' end
+local function make_strong_table() return {} end
+
+
+
+local memoize_opt_args = {'string', 'function', 'number'}
+
+local
 
 ---The function returned by `require 'memoize'`
 --
 -- @param a_function A function or other callable object to memoize
--- @param[opt] a_hash_function An optional function used to transform the arguments to
--- `a_function` when caching. May return one or more values. If not specified, the
--- default for this parameter is a function equivalent to
+-- @param[opt] ... Can be any combination of the following, in the order given:
+-- 
+-- * `operation:` An operation to perform on the cache of a_function, represented as a string.
+-- Defaults to `'reset'`. Valid operations are listed as `operation.\_\_\_\_\_` in this documentation.
+-- 
+-- * `a\_hash\_function:` An optional function used to generate hashes or hashable values for caching.
+-- If not specified, the default for this parameter is a function equivalent to
 --
--- `unpack({...}, 1, nparams)`
+--         unpack({...}, 1, num_params)
 --
--- where `nparams` is the number of parameters to `a_function`, or `nil` if `a_function` uses
--- varargs (`...`) or if `debug.getinfo` does not exist or does not return parameter information;
+-- * `num_params:` A number specifying the number of parameters to consider in the default hash
+-- function. If not specified, this number defaults to the number of parameters of `a_function`, or
+-- `nil` if `a_function` uses varargs (`...`) or if `debug.getinfo` does not exist or does not
+-- return parameter information.
 --
 -- @return `a_memoized_function` (an object representing the memoized function)
 
-function memoize(a_function, a_hash_function)
+function memoize(a_function, ...)
 
 	if type(a_function) ~= 'function' then
-		error('Argument 1 (a_function): expected function; got '..type(a_function))
-	end
 	
-	if a_hash_function == nil then
-		local num_args = get_nparams(a_function)
-		function a_hash_function(...) return unpack({...}, 1, num_args) end
-	end
-	if type(a_hash_function) ~= 'function' then
-		error('Argument 2 (a_hash_function): expected function; got '..type(a_function))
+		return error('Argument 1: expected function; got '..type(a_function))
 	end
 
-	local cache = weak 'kv'
-	local parent_nodes_of = weak 'k'
-	local result_of
+	local op, a_hash_function, num_params = unpack(opt_args(memoize_opt_args, ...))
 	
-	local make_result_table
+	op = op or 'reset'
 	
 	
 	
-	---Adds a node to the set of parents of another node or of a result
+	-- if the function is not already memoized, do so
 	
-	local function add_parent_node(x, node)
+	local a_memoized_function = a_function
 	
-		local parents_of_x = parent_nodes_of[x]
-		
-		if not parents_of_x then
-			parents_of_x = {}
-			parent_nodes_of[x] = parents_of_x
-		end
-		
-		parents_of_x[node] = true
-	end
+	if not cache_of[a_function] then
 	
+		num_params = num_params or get_nparams(a_function)
 	
+		a_hash_function = a_hash_function or function(...) return unpack({...}, 1, num_params) end
 	
-	---Gets the result of a cache node or, if there is none, caches and returns the result of the function call.
-	
-	local function get_or_save_result(node, ...)
-	
-		local result = result_of[node]
-		
-		if result == nil then
-		
-			result = a_function(...)
-			result_of[node] = box(result)
-			
-			-- We want one, and only one, unique result usable as a key for each series of hashes.
-			-- This means we cannot let the garbage collector eat a chain of cache nodes if the result
-			-- at the end of the chain is an uncollectable table, function, userdata, et c. However, the same does not
-			-- apply to value-type data as it is already unique, usable as a key, and never collectable.
-			
-			if not is_value_type[type(result)] then add_parent_node(result, node) end
-		end
-		
-		return unbox(result)
-	end
-	
-	
-	
-	---Recursively finds the node for each argument in (next_arg, ...)
-	
-	local function find_node_in(this_node, next_arg, ...)
+		local cache = {}
 
-		if  next_arg == nil and select('#', ...) == 0 then return this_node
+		a_memoized_function = function(...)
 	
+			return get_or_save_result(
+				cache.parent_nodes_of,
+				cache.result_of,
+				find_or_create_node_in(cache.root, cache.parent_nodes_of, a_hash_function(...)),
+				a_function,
+				...
+			)
+		end
+	
+		cache_of[a_memoized_function] = cache
+		
+		if op == 'allowgc' or op == 'preventgc' then
+		
+			operation[op](a_memoized_function)
+			op = box(nil)
+			
 		else
 		
-			next_arg = box(next_arg)
-
-			local next_node = this_node[next_arg]
-			
-			if not next_node then
-			
-				next_node = weak 'kv'
-				this_node[next_arg] = next_node
-				add_parent_node(next_node, this_node)
-			end
-	
-			return find_node_in(next_node, ...)
-		end
-	end
-	
-	
-	
-
-	local a_memoized_function_mt = {__metatable = 'memoized function'}
-	
-	--I still do not quite understand LDoc.
-	
-	---Memoized function methods:
-	--
-	-- @section a_memoized_function
-	
-	---Behaves like the function used to create it, but returns only a single result
-	-- which is cached for future calls.
-	--
-	-- @name a_memoized_function
-	-- @param ... The parameters to the memoized function
-	-- @return the first return value of the memoized function
-
-	local a_memoized_function = setmetatable({}, a_memoized_function_mt)
-	
-	
-	
-	local function assert_self(self)
-		if self ~= a_memoized_function then
-			error('First parameter is not self. Check usage of \'.\' and \':\'', 2)
-		end
-	end
-	
-	
-	
-	---Allows garbage collection of unused cached results.
-	-- @return `self`
-	
-	function a_memoized_function:allowgc()
-	
-		assert_self(self)
-		make_result_table = function() return weak 'kv' end
+			preventgc(a_memoized_function)
 		
-		local new_results = make_result_table()
-		
-		if result_of then for k,v in pairs(result_of) do new_results[k] = v end end
-		result_of = new_results
-		
-		return self
-	end
-	
-	
-	
-	---Prevents garbage collection of unused cached results. This is the default behavior.
-	-- @return `self`
-	
-	function a_memoized_function:preventgc()
-	
-		assert_self(self)
-		make_result_table = function() return {} end
-		
-		local new_results = make_result_table()
-		
-		if result_of then for k,v in pairs(result_of) do new_results[k] = v end end
-		result_of = new_results
-		
-		return self
-	end
-	
-	
-	
-	---Removes result for a series of arguments
-	--
-	-- @param ... The series of arguments to forget the result of
-	-- @return `self`
-	
-	function a_memoized_function:forget(...)
-	
-		assert_self(self)
-	
-		local node = find_node_in(cache, a_hash_function(...))
-		
-		local result_of_node = result_of[node]
-		
-		if not is_value_type[type(result_of_node)] then
-		
-			parent_nodes_of[result_of_node][node] = nil
+			if op == 'reset' then op = box(nil) end
 		end
 		
-		result_of[node] = nil
-		
-		return self
+		reset(a_memoized_function)
 	end
 	
+	operation[op](a_memoized_function)
 	
+	return a_memoized_function
+end
+
+
+
+-- a publicly inaccessible no-op to prevent redundant operations
+
+operation[box(nil)] = function(x) return x end
+
+
+
+---allows garbage collection of unused cached results of `a_function`
+
+operation.allowgc = function(a_function)
+
+	local cache = cache_of[a_function]
 	
-	---Clears all results
-	-- @return `self`
+	if not cache then return memoize(a_function, 'allowgc') end
 	
-	function a_memoized_function:forgetAll()
+	local old_result_of, new_result_of = cache.result_of, make_weak_table()
 	
-		assert_self(self)
-		
-		cache = weak 'kv'
-		parent_nodes_of = weak 'k'
-		result_of = make_result_table()
-		
-		return self
-	end
+	if old_result_of then for k, v in pairs(old_result_of) do new_result_of[k] = v end end
 	
+	cache.result_of, cache.make_result_table = new_result_of, make_weak_table
 	
+	return a_function
+end
+
+
+
+---prevents garbage collection of unused cached results of `a_function`
+
+operation.preventgc = function(a_function)
+
+	local cache = cache_of[a_function]
 	
-	-- __call metamethod so our memoized function can be treated as a function
+	if not cache then return memoize(a_function, 'preventgc') end
 	
-	function a_memoized_function_mt:__call(...)
+	local old_result_of, new_result_of = cache.result_of, make_strong_table()
 	
-		assert_self(self)
-		return get_or_save_result(find_node_in(cache, a_hash_function(...)), ...)
-	end
+	if old_result_of then for k, v in pairs(old_result_of) do new_result_of[k] = v end end
 	
-	-- return the memoized function
+	cache.result_of, cache.make_result_table = new_result_of, make_strong_table
 	
-	return a_memoized_function:preventgc()
+	return a_function
+end
+
+
+
+---resets the cache of `a_function`
+
+operation.reset = function(a_function)
+
+	local cache = cache_of[a_function]
+	
+	if not cache then return memoize(a_function, 'reset') end
+	
+	cache.root, cache.parent_nodes_of, cache.result_of = weak 'kv', weak 'k', cache.make_result_table()
+	
+	return a_function
 end
 
 
