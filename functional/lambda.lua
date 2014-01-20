@@ -8,7 +8,6 @@
 -- f(3)		-- returns 9
 
 assert(..., 'Do not use as main file; use require from different file')
-local _pkg = (...):match("(.-)[^%.]+$")
 local _id = select(2, ...) or ...
 
 
@@ -22,7 +21,9 @@ local setfenv = setfenv
 local setmetatable = setmetatable
 local type = type
 
-local memoize = require(_pkg..'memoize')
+local require = require 'relative_require' (...)
+
+local memoize = require '.memoize'
 
 
 local _ENV = {}

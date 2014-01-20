@@ -12,11 +12,7 @@
 -- local function foo(...) return something end	--an arbitrary function
 -- foo = memoize(foo)	--foo is now memoized
 
--- LDoc does not like some of the things that happen in this file. Be very careful when adding doc
--- comments, or it will probably crash, and almost certainly not output what was intended.
-
 assert(..., 'Do not use as main file; use require from different file')
-local _pkg = (...):match('(.-)[^%.]+$')
 local _id = select(2,...) or ...
 
 
@@ -30,8 +26,10 @@ local stderr = io.stderr
 local type = type
 local unpack = table.unpack or unpack
 
-local opt_args = require(_pkg..'opt_args')
-local weak = require(_pkg..'weak')
+local require = require 'relative_require' (...)
+
+local opt_args = require '^.opt_args'
+local weak = require '^.weak'
 
 
 local _ENV = {}
@@ -44,7 +42,7 @@ local function warn(msg) stderr:write(_id, ': WARNING: ', msg, '\n') end
 
 
 
----@local Used to store nil as a hash or result
+---Used to store nil as a hash or result
 
 local box, unbox
 do
@@ -86,12 +84,26 @@ do
 			
 		else
 		
-			warn 'debug.getinfo does not include nparams'; warn(warn_debug_getinfo_fail)
+			warn 'debug.getinfo does not include nparams'
+			warn(warn_debug_getinfo_fail)
+			
+			function get_nparams()
+			
+				warn 'debug.getinfo does not include nparams'
+				warn(warn_debug_getinfo_fail)
+			end
 		end
 		
 	else
 	
-		warn 'debug.getinfo does not exist'; warn(warn_debug_getinfo_fail)
+		warn 'debug.getinfo does not exist'
+		warn(warn_debug_getinfo_fail)
+		
+		function get_nparams()
+		
+			warn 'debug.getinfo does not exist'
+			warn(warn_debug_getinfo_fail)
+		end
 	end
 end
 
@@ -200,7 +212,7 @@ function memoize(a_function, ...)
 
 	if type(a_function) ~= 'function' then
 	
-		return error('Argument 1: expected function; got '..type(a_function))
+		return error('argument 1: expected function; got '..type(a_function))
 	end
 
 	local op, a_hash_function, num_params = unpack(opt_args(memoize_opt_args, ...))

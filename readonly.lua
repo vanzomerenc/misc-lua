@@ -3,7 +3,6 @@
 -- @copyright (c) 2014 Christopher VanZomeren
 
 assert(..., 'Do not use as main file; use require from different file')
-local _pkg = (...):match("(.-)[^%.]+$")
 local _id = select(2, ...) or ...
 
 
@@ -16,7 +15,9 @@ local stderr = io.stderr
 local tostring = tostring
 local type = type
 
-local weak = require(_pkg..'weak')
+local require = require 'relative_require' (...)
+
+local weak = require('.weak')
 
 
 local _ENV = {}
