@@ -50,7 +50,7 @@ local function get_opt_args(patterns, ...)
 		last_arg_index = next_arg_index
 	end
 	
-	return matches
+	return unpack(matches)
 end
 
 

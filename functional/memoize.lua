@@ -15,21 +15,27 @@
 assert(..., 'Do not use as main file; use require from different file')
 local _id = select(2,...) or ...
 
+local debug
+do
+	local success, result = pcall(require, 'debug')
+	debug = success and result
+end
 
 local debug_getinfo = debug and debug.getinfo
 
 local error = error
 local pairs = pairs
-local select = select
 local setmetatable = setmetatable
 local stderr = io.stderr
 local type = type
-local unpack = table.unpack or unpack
 
 local require = require 'relative_require' (...)
 
 local opt_args = require '^.opt_args'
 local weak = require '^.weak'
+
+local vararg = require 'vararg'
+local vararg_pack, vararg_range = vararg.pack, vararg.range
 
 
 local _ENV = {}
@@ -125,26 +131,26 @@ end
 
 
 
----Recursively finds the node for each argument in (next_arg, ...)
+---Finds the node for a series of arguments stored in a vararg object
 
-local function find_or_create_node_in(this_node, parent_nodes_of, next_arg, ...)
+local function find_or_create_node_in(this_node, parent_nodes_of, ...)
 
-	if  next_arg == nil and select('#', ...) == 0 then return this_node
-
-	else
-
+	for _, next_arg in vararg_pack(...) do
+	
 		next_arg = box(next_arg)
 		local next_node = this_node[next_arg]
-	
+		
 		if not next_node then
-	
+		
 			next_node = weak 'kv'
 			this_node[next_arg] = next_node
 			add_parent_node(parent_nodes_of, next_node, this_node)
 		end
-
-		return find_or_create_node_in(next_node, parent_nodes_of, ...)
+		
+		this_node = next_node
 	end
+	
+	return this_node
 end
 
 
@@ -179,11 +185,6 @@ local cache_of = weak 'k'
 
 
 
-local function make_weak_table() return weak 'kv' end
-local function make_strong_table() return {} end
-
-
-
 local memoize_opt_args = {'string', 'function', 'number'}
 
 local
@@ -196,7 +197,7 @@ local
 -- * `operation:` An operation to perform on the cache of a_function, represented as a string.
 -- Defaults to `'reset'`. Valid operations are listed as `operation.\_\_\_\_\_` in this documentation.
 -- 
--- * `a\_hash\_function:` An optional function used to generate hashes or hashable values for caching.
+-- * `a_hash_function:` An optional function used to generate hashes or hashable values for caching.
 -- If not specified, the default for this parameter is a function equivalent to
 --
 --         unpack({...}, 1, num_params)
@@ -215,7 +216,7 @@ function memoize(a_function, ...)
 		return error('argument 1: expected function; got '..type(a_function))
 	end
 
-	local op, a_hash_function, num_params = unpack(opt_args(memoize_opt_args, ...))
+	local op, a_hash_function, num_params = opt_args(memoize_opt_args, ...)
 	
 	op = op or 'reset'
 	
@@ -229,12 +230,17 @@ function memoize(a_function, ...)
 	
 		num_params = num_params or get_nparams(a_function)
 	
-		a_hash_function = a_hash_function or function(...) return unpack({...}, 1, num_params) end
-	
+		if not a_hash_function then
+		
+			if num_params then a_hash_function = function(...) return vararg_range(1, num_params, ...) end
+			else a_hash_function = function(...) return ... end
+			end
+		end
+		
 		local cache = {}
-
+		
 		a_memoized_function = function(...)
-	
+			
 			return get_or_save_result(
 				cache.parent_nodes_of,
 				cache.result_of,
@@ -268,9 +274,16 @@ end
 
 
 
--- a publicly inaccessible no-op to prevent redundant operations
+-- a private no-op to prevent redundant operations
 
 operation[box(nil)] = function(x) return x end
+
+
+
+---used by allowgc/preventgc
+
+local function make_weak_table() return weak 'kv' end
+local function make_strong_table() return {} end
 
 
 
@@ -279,8 +292,6 @@ operation[box(nil)] = function(x) return x end
 operation.allowgc = function(a_function)
 
 	local cache = cache_of[a_function]
-	
-	if not cache then return memoize(a_function, 'allowgc') end
 	
 	local old_result_of, new_result_of = cache.result_of, make_weak_table()
 	
@@ -299,8 +310,6 @@ operation.preventgc = function(a_function)
 
 	local cache = cache_of[a_function]
 	
-	if not cache then return memoize(a_function, 'preventgc') end
-	
 	local old_result_of, new_result_of = cache.result_of, make_strong_table()
 	
 	if old_result_of then for k, v in pairs(old_result_of) do new_result_of[k] = v end end
@@ -317,8 +326,6 @@ end
 operation.reset = function(a_function)
 
 	local cache = cache_of[a_function]
-	
-	if not cache then return memoize(a_function, 'reset') end
 	
 	cache.root, cache.parent_nodes_of, cache.result_of = weak 'kv', weak 'k', cache.make_result_table()
 	
