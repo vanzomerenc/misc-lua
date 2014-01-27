@@ -9,6 +9,7 @@
 -- require_relative '.foo.baz'	-- requires 'foo.baz' from the same directory as the current module
 -- require_relative '^.foo.baz	-- requires 'foo.baz' from the directory above the one containing the current module
 -- require_relative '^.^.foo.baz'	-- requires 'foo.baz' from the directory two above the one containing the current module
+-- require_relative '@.foo.baz'	--requires 'foo.baz' from the directory sharing this module's name
 
 assert(..., 'Do not use as main file; use require from different file')
 local _pkg = (...):match("(.-)[^%.]+$")
@@ -30,14 +31,14 @@ if setfenv then setfenv(1, _ENV) end
 
 return function(calling_module)
 
-	if type(calling_module) ~= 'string' then error('expected string, got '..type(calling_module)) end
+	if type(calling_module) ~= 'string' then error('expected string, received '..type(calling_module)) end
 
 	local parent_package = {}
 	for str in gmatch(calling_module, '([^.]*%.)') do insert(parent_package, str) end
 
 	return function(modname)
 	
-		if type(modname) ~= 'string' then error('expected string, got '..type(modname)) end
+		if type(modname) ~= 'string' then error('expected string, received '..type(modname)) end
 
 		local first_char = sub(modname, 1, 1)
 		
